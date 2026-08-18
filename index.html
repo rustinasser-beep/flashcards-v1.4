@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#2563eb">
   <meta name="description" content="بطاقات كلمات للتعلم والمراجعة والاختبارات والتدريب الصوتي">
-  <title>📚 بطاقات الكلمات – v1.4</title>
+  <title>📚 بطاقات الكلمات – v1.4.3</title>
   <link rel="manifest" href="./manifest.json">
   <link rel="icon" href="./icons/icon-192.png" type="image/png">
   <link rel="stylesheet" href="./style.css">
@@ -98,7 +98,7 @@
     </div>
   </div>
 
-  <input type="text" id="guessInput" placeholder="اكتب الإجابة..." autocomplete="off">
+  <input type="text" id="guessInput" placeholder="اكتب الإجابة..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   <div class="options-grid" id="optionsGrid"></div>
 
   <div id="voicePanel" class="voice-panel" style="display:none;">
@@ -120,13 +120,13 @@
 <div class="page" id="hafazniPage">
   <div class="header">
     <h2>🧠 حفظني</h2>
-    <p class="subtitle">اختبار مركّب على الكلمات التي تختارها فقط</p>
+    <p class="subtitle">جلسة تعلم ذكية مع تكرار مكيّف ومراجعة الأخطاء</p>
   </div>
 
-  <div class="card hafazni-card">
+  <div class="card hafazni-card" id="hafazniSetupCard">
     <div class="hafazni-icon">🧠</div>
     <h3>طريقة حفظني</h3>
-    <p>يُنطق لك السؤال، ثم تكتب الإجابة. بعد كل إجابة تحصل على نتيجة مباشرة، ويمكنك إعادة الكلمات التي أخطأت فيها.</p>
+    <p>نظام يعتمد على الاسترجاع النشط والتكرار المتباعد. يركّز على الكلمات التي تخطئ فيها ويعيد عرضها بذكاء حتى تثبت.</p>
     <div class="hafazni-stats">
       <span>مختارة: <strong id="hafazniSelectedCount">0</strong></span>
       <span>متبقي: <strong id="hafazniRemainingCount">0</strong></span>
@@ -136,18 +136,45 @@
   </div>
 
   <div class="hafazni-session" id="hafazniSession" style="display:none;">
-    <div class="session-progress"><span id="hafazniProgressText">1 / 1</span><div><div id="hafazniProgressBar"></div></div></div>
+    <div class="session-progress">
+      <span id="hafazniProgressText">0 / 0</span>
+      <div><div id="hafazniProgressBar"></div></div>
+    </div>
     <div class="mini-card">
-      <div class="mini-label">السؤال</div>
+      <div class="mini-label" id="hafazniQuestionTypeLabel">✍️ اكتب الترجمة</div>
       <div class="mini-question" id="hafazniQuestion">—</div>
       <button class="ctrl-btn" id="hafazniSpeakBtn">🔊 انطق</button>
     </div>
-    <input type="text" id="hafazniInput" placeholder="اكتب الإجابة..." autocomplete="off">
+    <input type="text" id="hafazniInput" placeholder="اكتب الإجابة..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <div id="hafazniOptionsGrid" class="options-grid" style="display:none;"></div>
     <div class="test-feedback" id="hafazniFeedback"></div>
+    <div class="hafazni-word-stats" id="hafazniWordStats" style="display:none;">
+      <span id="hafazniAttempts">المحاولات: 0</span>
+      <span id="hafazniMastery">الإتقان: 0%</span>
+    </div>
     <div class="control-group">
       <button class="ctrl-btn primary" id="hafazniCheckBtn">✅ تحقق</button>
-      <button class="ctrl-btn" id="hafazniSkipBtn">⏭ التالي</button>
+      <button class="ctrl-btn" id="hafazniSkipBtn">⏭ تجاوز</button>
       <button class="ctrl-btn" id="hafazniStopBtn">⛔ إنهاء</button>
+    </div>
+  </div>
+
+  <div class="hafazni-summary" id="hafazniSummary" style="display:none;">
+    <div class="card">
+      <h3>📊 ملخص الجلسة</h3>
+      <div class="summary-grid">
+        <div class="summary-item"><span class="summary-label">✅ صحيحة</span><span class="summary-value" id="summaryCorrect">0</span></div>
+        <div class="summary-item"><span class="summary-label">❌ خاطئة</span><span class="summary-value" id="summaryWrong">0</span></div>
+        <div class="summary-item"><span class="summary-label">📊 النسبة</span><span class="summary-value" id="summaryRate">0%</span></div>
+        <div class="summary-item"><span class="summary-label">🔄 المحاولات</span><span class="summary-value" id="summaryAttempts">0</span></div>
+      </div>
+      <div class="summary-details">
+        <p><strong>📘 الكلمات التي ثبتت:</strong> <span id="summaryMastered">0</span></p>
+        <p><strong>📕 تحتاج مراجعة:</strong> <span id="summaryNeedsReview">0</span></p>
+        <p><strong>🔴 الأخطاء:</strong> <span id="summaryMistakes">0</span></p>
+      </div>
+      <button class="ctrl-btn primary wide-btn" id="summaryReviewBtn">🔁 راجع الأخطاء</button>
+      <button class="ctrl-btn wide-btn" id="summaryCloseBtn">✔️ إغلاق</button>
     </div>
   </div>
 </div>
@@ -159,8 +186,8 @@
   </div>
 
   <div class="add-word-form">
-    <input type="text" id="newEnglish" placeholder="الكلمة الإنجليزية">
-    <input type="text" id="newArabic" placeholder="الترجمة العربية">
+    <input type="text" id="newEnglish" placeholder="الكلمة الإنجليزية" autocomplete="off">
+    <input type="text" id="newArabic" placeholder="الترجمة العربية" autocomplete="off">
     <button class="ctrl-btn primary" id="addWordBtn">➕ إضافة</button>
   </div>
 
@@ -219,7 +246,7 @@
       <input type="email" name="email" placeholder="بريدك الإلكتروني *" required>
       <textarea name="message" rows="4" placeholder="اكتب رأيك أو اقتراحك..." required></textarea>
       <input type="hidden" name="access_key" value="c1d4a19f-7583-47ee-a733-db6276493109">
-      <input type="hidden" name="subject" value="رأي جديد من تطبيق الكلمات v1.4.2">
+      <input type="hidden" name="subject" value="رأي جديد من تطبيق الكلمات v1.4.3">
       <button type="submit" class="ctrl-btn primary">📨 إرسال الرأي</button>
     </form>
     <div id="feedbackSuccess" class="form-message success" style="display:none;"></div>
@@ -228,7 +255,7 @@
 
   <div class="settings-group">
     <label class="settings-label">معلومات الإصدار</label>
-    <p class="version-text">الإصدار الحالي: <strong>1.4.2</strong></p>
+    <p class="version-text">الإصدار الحالي: <strong>1.4.3</strong></p>
     <button class="ctrl-btn" id="viewFeaturesBtn">📋 عرض ميزات هذا الإصدار</button>
   </div>
 
@@ -258,7 +285,7 @@
   <button class="nav-btn" data-page="settingsPage"><span class="nav-icon">⚙️</span><span class="nav-label">إعدادات</span></button>
 </nav>
 
-<div class="version-badge">v1.4.2</div>
+<div class="version-badge">v1.4.3</div>
 
 <div id="helpModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
   <div class="modal-content">
@@ -269,7 +296,7 @@
       <p><strong>2. الدراسة:</strong> اقلب البطاقة، اسمع النطق، تنقّل أو استخدم المستحق والصعب.</p>
       <p><strong>3. الاختبار:</strong> كتابة، اختيارات، أو صوت. الصوت يعتمد على Speech Recognition في المتصفح.</p>
       <p><strong>4. الكلمات:</strong> أضف كلمات يدويًا أو استورد ملفًا من داخل صفحة الكلمات، ثم حدّد ما تريد في "حفظني".</p>
-      <p><strong>5. حفظني:</strong> اختر كلمات محددة، ثم ابدأ جلسة تجمع النطق + الكتابة + التكرار على الأخطاء.</p>
+      <p><strong>5. حفظني:</strong> نظام ذكي يعيد عرض الكلمات التي تخطئ فيها، مع تكرار مكيّف ومراجعة الأخطاء.</p>
       <p><strong>6. الحفظ:</strong> كل تغيير يُحفظ تلقائيًا داخل المتصفح. النسخة الاحتياطية تحفظ الكلمات والتقدم والإعدادات.</p>
     </div>
   </div>
@@ -278,17 +305,20 @@
 <div id="updateModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="updateTitle">
   <div class="modal-content">
     <button class="close-modal" id="closeUpdateModal" aria-label="إغلاق">×</button>
-    <h2 id="updateTitle">🔄 الإصدار 1.4.2</h2>
+    <h2 id="updateTitle">🔄 الإصدار 1.4.3</h2>
     <div class="update-body">
       <p>تم إصلاح الأساس وإضافة:</p>
       <ul>
-        <li>✅ حفظ محلي أكثر ثباتًا مع استرجاع من النسخة القديمة</li>
-        <li>✅ استيراد TXT/CSV من صفحة الكلمات نفسها</li>
-        <li>✅ اختبار صوتي مع قياس تقريبي للأخطاء</li>
-        <li>✅ وضع "حفظني" للكلمات المختارة فقط</li>
-        <li>✅ نسخة احتياطية واسترجاع JSON</li>
-        <li>✅ تحسينات بصرية ومؤثرات خفيفة بدون تغيير هوية التصميم</li>
-        <li>✅ خدمة Offline محسّنة لـ GitHub Pages</li>
+        <li>✅ نظام حفظني جديد – استرجاع نشط + تكرار مكيّف + مراجعة الأخطاء</li>
+        <li>✅ تحسين النطق الصوتي (TTS) – English‑only</li>
+        <li>✅ إصلاح اختبار الصوت – تحديد لغة التعرف حسب الإجابة</li>
+        <li>✅ منع الانتقال التلقائي المزدوج</li>
+        <li>✅ منع تنفيذ الإجابة مرتين</li>
+        <li>✅ تحسين خيارات الاختبار – منع التكرار</li>
+        <li>✅ تحسين الحفظ المحلي – تجنب الكتابة فوق البيانات</li>
+        <li>✅ تحديث Service Worker – كاش جديد و network‑first</li>
+        <li>✅ إصلاح مشكلة الإدخال (input) – ثبات الخلفية في الوضعين</li>
+        <li>✅ ملخص جلسة حفظني مع إحصائيات مفصلة</li>
       </ul>
     </div>
   </div>
