@@ -1,7 +1,7 @@
 (() => {
   'use strict';
 
-  const APP_VERSION = '1.4.2';
+  const APP_VERSION = '1.4.3';
   const STORAGE_KEY = 'flashcards_v1_4';
   const OLD_STORAGE_KEYS = ['flashcards_v2'];
   const UPDATE_KEY = 'flashcards_last_seen_version';
@@ -20,9 +20,11 @@
     selectedIds: [],
     hafazni: {
       active: false,
-      ids: [],
-      index: 0,
-      mistakes: []
+      sessionWords: [],      // array of session word objects with temp data
+      currentIndex: 0,
+      mistakes: [],
+      processing: false,
+      summary: { correct: 0, wrong: 0, attempts: 0, mastered: [], needsReview: [] }
     },
     search: ''
   };
@@ -50,7 +52,10 @@
       'resetProgressBtn','resetBtn','feedbackForm','feedbackSuccess','feedbackError','hafazniSelectedCount',
       'hafazniRemainingCount','startHafazniBtn','reviewMistakesBtn','hafazniSession','hafazniProgressText',
       'hafazniProgressBar','hafazniQuestion','hafazniSpeakBtn','hafazniInput','hafazniFeedback',
-      'hafazniCheckBtn','hafazniSkipBtn','hafazniStopBtn','studyFilterLabel'
+      'hafazniCheckBtn','hafazniSkipBtn','hafazniStopBtn','studyFilterLabel',
+      'hafazniSetupCard','hafazniSummary','summaryCorrect','summaryWrong','summaryRate','summaryAttempts',
+      'summaryMastered','summaryNeedsReview','summaryMistakes','summaryReviewBtn','summaryCloseBtn',
+      'hafazniQuestionTypeLabel','hafazniOptionsGrid','hafazniWordStats','hafazniAttempts','hafazniMastery'
     ].forEach(id => el[id] = $(id));
   }
 
@@ -143,7 +148,8 @@
     if (saveTimer) clearTimeout(saveTimer);
 
     const save = () => {
-      const ok = storageSet(STORAGE_KEY, buildPersistedState());
+      const data = buildPersistedState();
+      const ok = storageSet(STORAGE_KEY, data);
       setSaveStatus(ok ? '' : 'error', ok ? '✅ محفوظ تلقائيًا' : '⚠️ تعذر الحفظ');
     };
 
@@ -181,7 +187,6 @@
       applyDirectionUI();
       updateTestModeUI();
 
-      // احفظ الصيغة الجديدة بعد الترحيل من النسخة السابقة.
       saveState(true);
     } catch (error) {
       console.error('Invalid saved data:', error);
@@ -321,6 +326,7 @@
   }
 
   function moveStudy(delta) {
+    if (state.testLocked) return;
     const list = getStudyList();
     if (!list.length) return;
     state.currentIndex = (state.currentIndex + delta + list.length) % list.length;
@@ -348,9 +354,6 @@
     return detectTextLanguage(getSourceWord(word)) === 'ar' ? 'ar-SA' : 'en-US';
   }
 
-  // في الاختبار الصوتي نحدد لغة الميكروفون من الإجابة المطلوبة فقط:
-  // سؤال إنجليزي -> الإجابة عربية -> recognition بالعربية.
-  // سؤال عربي -> الإجابة إنجليزية -> recognition بالإنجليزية.
   function getVoiceRecognitionLanguage(word) {
     return detectTextLanguage(getTargetWord(word)) === 'ar' ? 'ar-SA' : 'en-US';
   }
@@ -361,14 +364,11 @@
 
   function speak(text) {
     if (!('speechSynthesis' in window) || typeof SpeechSynthesisUtterance === 'undefined') {
-      alert('المتصفح لا يدعم النطق الصوتي.');
+      console.warn('المتصفح لا يدعم النطق الصوتي.');
       return;
     }
 
     const value = String(text || '').trim();
-
-    // النطق هنا للإنجليزية فقط.
-    // لو البيانات الإنجليزية نفسها ناقصة/عربية، لا نرسلها إلى صوت النظام.
     if (!value || !/[A-Za-z]/.test(value)) {
       console.warn('English pronunciation skipped: no English text.', value);
       return;
@@ -379,13 +379,11 @@
     const speakWithEnglishVoice = () => {
       try {
         synth.cancel();
-
         const voices = synth.getVoices ? synth.getVoices() : [];
         const englishVoice = voices.find(v =>
           /^en(?:-|_)/i.test(String(v.lang || ''))
         );
 
-        // لا نسمح للمتصفح باختيار صوت عربي كبديل.
         if (!englishVoice) {
           console.warn('No English TTS voice is available yet.');
           return;
@@ -415,7 +413,6 @@
       return;
     }
 
-    // انتظر تحميل أصوات النظام مرة واحدة بدل التأخير المتكرر.
     let handled = false;
     const onVoicesChanged = () => {
       if (handled) return;
@@ -426,7 +423,6 @@
 
     synth.addEventListener?.('voiceschanged', onVoicesChanged);
 
-    // بعض المتصفحات لا تطلق voiceschanged إذا كانت الأصوات جاهزة متأخرًا.
     window.setTimeout(() => {
       if (handled) return;
       handled = true;
@@ -451,7 +447,6 @@
       .replace(/\s+/g, ' ')
       .trim();
   }
-
 
   function levenshtein(a, b) {
     const m = a.length;
@@ -602,8 +597,6 @@
     stopRecognition();
 
     recognition = new SpeechRecognition();
-
-    // اللغة تُحدد من الإجابة المطلوبة في الاختبار، وليس من إعدادات الحفظ أو إعداد منفصل للصوت.
     const language = getVoiceRecognitionLanguage(word);
 
     recognition.lang = language;
@@ -611,15 +604,17 @@
     recognition.continuous = false;
     recognition.maxAlternatives = 5;
 
-    const currentToken = state.questionToken; // حفظ token الحالي
+    const currentToken = state.questionToken;
 
-    el.voiceState.textContent = `🎙️ أتكلم الآن للإجابة بـ ${language === 'ar-SA' ? 'العربية' : 'English'}...`; 
+    el.voiceState.textContent = `🎙️ أتكلم الآن للإجابة بـ ${language === 'ar-SA' ? 'العربية' : 'English'}...`;
     el.recordBtn.textContent = '⏹️ أوقف التسجيل';
     el.recordBtn.classList.add('recording');
 
     recognition.onresult = event => {
-      // تجاهل النتيجة إذا تغير السؤال
-      if (state.questionToken !== currentToken) return;
+      if (state.questionToken !== currentToken) {
+        console.warn('Voice result ignored: question changed.');
+        return;
+      }
 
       const alternatives = [];
 
@@ -642,7 +637,6 @@
         return;
       }
 
-      // نختار أفضل بديل بناءً على قربه من الإجابة، مع استخدام الثقة كعامل مساعد.
       const scored = alternatives
         .map(item => {
           const match = estimateMistakes(item.transcript, target);
@@ -664,8 +658,6 @@
         return;
       }
 
-      // النتيجة القريبة جدًا لا تُحسب خطأً على المستخدم.
-      // نطلب إعادة التسجيل لأن التعرف الصوتي قد يكون أخطأ في كلمة واحدة.
       if (best.match.verdict === 'probable' || best.match.verdict === 'uncertain') {
         el.testFeedback.textContent =
           `${voiceFeedback(best.match.count, target, language)} لم أسجلها كخطأ حتى لا أظلمك. الصحيح: ${target}`;
@@ -740,6 +732,8 @@
     window.setTimeout(() => {
       if (state.currentPage === 'testPage') {
         advanceQuestion();
+      } else {
+        unlockTest();
       }
     }, 900);
   }
@@ -762,7 +756,6 @@
   function updateTestView() {
     const word = getCurrentStudyWord();
 
-    // set token and unlock for this question
     if (word) {
       state.questionToken = createQuestionToken(word);
       unlockTest();
@@ -783,7 +776,6 @@
     el.testWordStatus.style.display = 'block';
     el.testPronounceBtn.style.display = word.english && word.english !== '?' ? 'flex' : 'none';
 
-    // مسح حقل الكتابة قبل عرض السؤال الجديد حتى لا تبقى إجابة السؤال السابق
     if (state.testSubMode === 'writing') {
       if (guessInputResetTimer) { clearTimeout(guessInputResetTimer); guessInputResetTimer = null; }
       el.guessInput.value = '';
@@ -796,7 +788,6 @@
       el.voiceState.textContent = `🎙️ سأستمع للإجابة بـ ${getAnswerLanguageName(word)} لأن هذا هو لسان الإجابة المطلوبة.`;
     }
 
-    // التركيز على حقل الكتابة إذا كان الوضع كتابة
     if (state.currentPage === 'testPage' && state.testSubMode === 'writing') {
       window.setTimeout(() => el.guessInput.focus(), 0);
     }
@@ -809,7 +800,6 @@
     el.testFeedback.textContent = '';
     el.testFeedback.className = 'test-feedback';
     el.optionsGrid.innerHTML = '';
-    updateTestView();
   }
 
   function checkWriting() {
@@ -831,7 +821,6 @@
     el.testFeedback.textContent = isCorrect ? '✅ إجابة صحيحة!' : `❌ الصحيح: ${getTargetWord(word)}`;
     el.testFeedback.className = 'test-feedback ' + (isCorrect ? 'correct' : 'wrong');
 
-    // إزالة class بعد فترة قصيرة دون التأثير على القفل
     if (guessInputResetTimer) clearTimeout(guessInputResetTimer);
     guessInputResetTimer = window.setTimeout(() => {
       el.guessInput.className = '';
@@ -848,13 +837,31 @@
       .slice(0, 3)
       .map(getTargetWord);
 
-    while (candidates.length < 3 && state.vocabulary.length) {
-      const fallback = getTargetWord(state.vocabulary[candidates.length % state.vocabulary.length]);
-      if (!candidates.includes(fallback) && fallback !== target) candidates.push(fallback);
-      else break;
+    const uniqueCandidates = [];
+    const seen = new Set();
+    for (const item of candidates) {
+      if (!seen.has(item)) {
+        seen.add(item);
+        uniqueCandidates.push(item);
+      }
     }
 
-    const options = [target, ...candidates].sort(() => Math.random() - .5);
+    while (uniqueCandidates.length < 3 && state.vocabulary.length) {
+      const fallback = getTargetWord(state.vocabulary[uniqueCandidates.length % state.vocabulary.length]);
+      if (!seen.has(fallback) && fallback !== target) {
+        seen.add(fallback);
+        uniqueCandidates.push(fallback);
+      } else {
+        break;
+      }
+    }
+
+    while (uniqueCandidates.length < 3) {
+      const fallback = target + (uniqueCandidates.length + 1);
+      uniqueCandidates.push(fallback);
+    }
+
+    const options = [target, ...uniqueCandidates].sort(() => Math.random() - .5);
     el.optionsGrid.innerHTML = '';
 
     options.forEach(option => {
@@ -1233,9 +1240,16 @@
   function updateHafazniOverview() {
     updateSelectionUI();
     const remaining = state.hafazni.active
-      ? Math.max(0, state.hafazni.ids.length - state.hafazni.index)
+      ? Math.max(0, state.hafazni.sessionWords.length - state.hafazni.currentIndex)
       : state.selectedIds.length;
     el.hafazniRemainingCount.textContent = remaining;
+    // إذا كانت الجلسة نشطة، نحدث التقدم
+    if (state.hafazni.active) {
+      const total = state.hafazni.sessionWords.length;
+      const done = state.hafazni.currentIndex;
+      el.hafazniProgressText.textContent = `${done} / ${total}`;
+      el.hafazniProgressBar.style.width = total ? `${(done / total) * 100}%` : '0%';
+    }
   }
 
   function getWordsByIds(ids) {
@@ -1243,128 +1257,411 @@
     return state.vocabulary.filter(w => set.has(w.id));
   }
 
-  function startHafazniSession(ids = state.selectedIds) {
+  // ==================== HAFazni Advanced Session ====================
+
+  function initHafazniSession(ids) {
     const words = getWordsByIds(ids);
     if (!words.length) {
       alert('حدد كلمات أولًا من صفحة الكلمات.');
       return;
     }
 
+    // إعادة ضبط حالة الجلسة
     state.hafazni.active = true;
-    state.hafazni.ids = words.map(w => w.id);
-    state.hafazni.index = 0;
+    state.hafazni.sessionWords = words.map(w => ({
+      id: w.id,
+      attempts: 0,
+      correct: 0,
+      wrong: 0,
+      consecutiveCorrect: 0,
+      consecutiveWrong: 0,
+      difficulty: 0,          // 0-10, كلما زادت صعوبة كلما زادت الأولوية
+      mastery: 0,             // 0-100
+      lastShown: now(),
+      nextReview: now(),
+      lapses: 0,
+      answered: false
+    }));
+    state.hafazni.currentIndex = 0;
     state.hafazni.mistakes = [];
+    state.hafazni.processing = false;
+    state.hafazni.summary = { correct: 0, wrong: 0, attempts: 0, mastered: [], needsReview: [] };
+
+    // إخفاء الإعدادات وإظهار الجلسة
+    el.hafazniSetupCard.style.display = 'none';
     el.hafazniSession.style.display = 'block';
-    resetHafazniQuestion();
+    el.hafazniSummary.style.display = 'none';
+
+    // تحديث واجهة المستخدم
     updateHafazniOverview();
+    renderHafazniQuestion();
   }
 
-  function resetHafazniQuestion() {
-    const ids = state.hafazni.ids;
-    if (!ids.length) return;
+  function renderHafazniQuestion() {
+    if (!state.hafazni.active) return;
 
-    if (state.hafazni.index >= ids.length) {
-      finishHafazni();
+    const session = state.hafazni;
+    const words = session.sessionWords;
+
+    // إذا وصلنا لنهاية القائمة
+    if (session.currentIndex >= words.length) {
+      finishHafazniSession();
       return;
     }
 
-    const word = state.vocabulary.find(w => w.id === ids[state.hafazni.index]);
-    if (!word) {
-      state.hafazni.index++;
-      resetHafazniQuestion();
+    // نحصل على الكلمة الحالية من الجلسة (مع البيانات المؤقتة)
+    const sessionWord = words[session.currentIndex];
+    if (!sessionWord) {
+      session.currentIndex++;
+      renderHafazniQuestion();
       return;
     }
 
-    el.hafazniProgressText.textContent = `${state.hafazni.index + 1} / ${ids.length}`;
-    el.hafazniProgressBar.style.width = `${((state.hafazni.index + 1) / ids.length) * 100}%`;
-    el.hafazniQuestion.textContent = getSourceWord(word);
-    el.hafazniInput.value = '';
-    el.hafazniInput.className = '';
+    // نبحث عن الكلمة الأصلية للحصول على النصوص
+    const originalWord = state.vocabulary.find(w => w.id === sessionWord.id);
+    if (!originalWord) {
+      session.currentIndex++;
+      renderHafazniQuestion();
+      return;
+    }
+
+    // تحديث شريط التقدم
+    const total = words.length;
+    const done = session.currentIndex;
+    el.hafazniProgressText.textContent = `${done + 1} / ${total}`;
+    el.hafazniProgressBar.style.width = total ? `${((done + 1) / total) * 100}%` : '0%';
+
+    // تحديد نوع السؤال: كتابة أو اختيار من متعدد
+    // نستخدم تنويع: إذا كانت صعوبة الكلمة عالية أو عدد الأخطاء كبير نستخدم اختيار من متعدد، وإلا كتابة.
+    const useChoice = (sessionWord.wrong > 1 || sessionWord.difficulty > 4) && sessionWord.attempts > 0;
+    const questionType = useChoice ? 'choice' : 'writing';
+
+    // عرض السؤال (المصدر)
+    const source = getSourceWord(originalWord);
+    const target = getTargetWord(originalWord);
+
+    el.hafazniQuestion.textContent = source;
+    el.hafazniQuestionTypeLabel.textContent = useChoice ? '🔘 اختر الترجمة الصحيحة' : '✍️ اكتب الترجمة';
+
+    // إظهار/إخفاء عناصر الإدخال
+    if (useChoice) {
+      el.hafazniInput.style.display = 'none';
+      el.hafazniOptionsGrid.style.display = 'grid';
+      generateHafazniOptions(originalWord, target);
+    } else {
+      el.hafazniInput.style.display = 'block';
+      el.hafazniOptionsGrid.style.display = 'none';
+      el.hafazniInput.value = '';
+      el.hafazniInput.className = '';
+      el.hafazniInput.focus();
+    }
+
+    // عرض إحصائيات الكلمة
+    el.hafazniWordStats.style.display = 'flex';
+    el.hafazniAttempts.textContent = `المحاولات: ${sessionWord.attempts}`;
+    const mastery = Math.min(100, Math.round((sessionWord.correct / Math.max(1, sessionWord.attempts)) * 100));
+    el.hafazniMastery.textContent = `الإتقان: ${mastery}%`;
+
+    // مسح الملاحظات السابقة
     el.hafazniFeedback.textContent = '';
     el.hafazniFeedback.className = 'test-feedback';
 
-    // ينطق السؤال تلقائيًا، كما طلبت فكرة "حفظني".
-    speak(word.english);
+    // نطق السؤال إن كان إنجليزيًا
+    if (originalWord.english && /[A-Za-z]/.test(originalWord.english)) {
+      speak(originalWord.english);
+    }
+
+    // تحديث lastShown
+    sessionWord.lastShown = now();
+    sessionWord.answered = false;
+    state.hafazni.processing = false;
+    updateHafazniOverview();
   }
 
-  function checkHafazni() {
-    if (!state.hafazni.active) return;
-    const word = state.vocabulary.find(w => w.id === state.hafazni.ids[state.hafazni.index]);
-    if (!word) return;
+  function generateHafazniOptions(correctWord, correctAnswer) {
+    const grid = el.hafazniOptionsGrid;
+    grid.innerHTML = '';
 
-    const answer = normalizeString(el.hafazniInput.value);
-    if (!answer) {
+    // نجمع خيارات من كلمات أخرى في الجلسة (أو من المفردات العامة)
+    const allWords = state.vocabulary.filter(w => w.id !== correctWord.id);
+    const distractors = allWords
+      .map(w => getTargetWord(w))
+      .filter(t => t !== correctAnswer)
+      .sort(() => Math.random() - .5)
+      .slice(0, 3);
+
+    // نضمن 3 خيارات مختلفة
+    const unique = [correctAnswer];
+    for (const d of distractors) {
+      if (!unique.includes(d) && unique.length < 4) unique.push(d);
+    }
+    while (unique.length < 4) {
+      unique.push('?');
+    }
+
+    // خلط
+    const shuffled = unique.sort(() => Math.random() - .5);
+
+    shuffled.forEach(option => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'option-btn';
+      btn.textContent = option;
+      btn.addEventListener('click', () => handleHafazniChoice(option, correctAnswer, btn));
+      grid.appendChild(btn);
+    });
+  }
+
+  function handleHafazniChoice(selected, correctAnswer, btnElement) {
+    if (state.hafazni.processing) return;
+    const session = state.hafazni;
+    if (!session.active) return;
+
+    const sessionWord = session.sessionWords[session.currentIndex];
+    if (!sessionWord || sessionWord.answered) return;
+
+    state.hafazni.processing = true;
+    sessionWord.answered = true;
+
+    const isCorrect = normalizeString(selected) === normalizeString(correctAnswer);
+
+    // تعطيل الأزرار وإظهار النتيجة
+    const buttons = el.hafazniOptionsGrid.querySelectorAll('.option-btn');
+    buttons.forEach(b => b.disabled = true);
+    buttons.forEach(b => {
+      if (normalizeString(b.textContent) === normalizeString(correctAnswer)) {
+        b.classList.add('correct-choice');
+      }
+      if (b === btnElement && !isCorrect) {
+        b.classList.add('wrong-choice');
+      }
+    });
+
+    // تحديث إحصائيات الجلسة
+    sessionWord.attempts++;
+    session.summary.attempts++;
+    if (isCorrect) {
+      sessionWord.correct++;
+      sessionWord.consecutiveCorrect++;
+      sessionWord.consecutiveWrong = 0;
+      session.summary.correct++;
+    } else {
+      sessionWord.wrong++;
+      sessionWord.consecutiveWrong++;
+      sessionWord.consecutiveCorrect = 0;
+      session.summary.wrong++;
+      session.mistakes.push(sessionWord.id);
+    }
+
+    // تحديث الصعوبة والإتقان
+    const ratio = sessionWord.correct / Math.max(1, sessionWord.attempts);
+    sessionWord.mastery = Math.min(100, Math.round(ratio * 100));
+    sessionWord.difficulty = Math.min(10, Math.max(0, 
+      sessionWord.difficulty + (isCorrect ? -0.5 : 1.5)
+    ));
+
+    // تحديث حالة الكلمة الأصلية (تأثير دائم)
+    const originalWord = state.vocabulary.find(w => w.id === sessionWord.id);
+    if (originalWord) {
+      if (isCorrect) {
+        originalWord.correctCount++;
+        originalWord.status = originalWord.correctCount > 2 ? 'learned' : 'new';
+        originalWord.interval = originalWord.interval > 0 ? Math.min(originalWord.interval * 1.5, 720) : 1;
+      } else {
+        originalWord.wrongCount++;
+        originalWord.status = 'difficult';
+        originalWord.interval = 0;
+      }
+      originalWord.lastReview = now();
+      originalWord.due = now() + originalWord.interval * 3600000;
+    }
+
+    // عرض التغذية الراجعة
+    el.hafazniFeedback.textContent = isCorrect ? '✅ إجابة صحيحة!' : `❌ الصحيح: ${correctAnswer}`;
+    el.hafazniFeedback.className = 'test-feedback ' + (isCorrect ? 'correct' : 'wrong');
+
+    // حفظ التقدم
+    saveState(true);
+    updateStats();
+
+    // الانتقال إلى السؤال التالي بعد مهلة
+    window.setTimeout(() => {
+      // نحرك المؤشر إلى الأمام حسب الخوارزمية الذكية
+      advanceHafazniIndex(isCorrect, sessionWord);
+    }, 1200);
+  }
+
+  function checkHafazniWriting() {
+    if (state.hafazni.processing) return;
+    if (!state.hafazni.active) return;
+
+    const session = state.hafazni;
+    const sessionWord = session.sessionWords[session.currentIndex];
+    if (!sessionWord || sessionWord.answered) return;
+
+    const input = el.hafazniInput.value.trim();
+    if (!input) {
       el.hafazniFeedback.textContent = '⚠️ اكتب الإجابة أولًا.';
       return;
     }
 
-    const target = normalizeString(getTargetWord(word));
-    const correct = answer === target;
+    const originalWord = state.vocabulary.find(w => w.id === sessionWord.id);
+    if (!originalWord) return;
 
-    el.hafazniInput.className = correct ? 'correct' : 'wrong';
-    el.hafazniFeedback.textContent = correct
-      ? '✅ ممتاز، إجابة صحيحة.'
-      : `❌ الصحيح: ${getTargetWord(word)}`;
-    el.hafazniFeedback.className = 'test-feedback ' + (correct ? 'correct' : 'wrong');
+    const correctAnswer = getTargetWord(originalWord);
+    const isCorrect = normalizeString(input) === normalizeString(correctAnswer);
 
-    if (correct) {
-      word.status = 'learned';
-      word.correctCount += 1;
-      word.interval = word.interval > 0 ? Math.min(word.interval * 2, 720) : 1;
-      word.due = now() + word.interval * 3600000;
+    state.hafazni.processing = true;
+    sessionWord.answered = true;
+
+    // تحديث المظهر
+    el.hafazniInput.className = isCorrect ? 'correct' : 'wrong';
+
+    // تحديث إحصائيات الجلسة
+    sessionWord.attempts++;
+    session.summary.attempts++;
+    if (isCorrect) {
+      sessionWord.correct++;
+      sessionWord.consecutiveCorrect++;
+      sessionWord.consecutiveWrong = 0;
+      session.summary.correct++;
     } else {
-      word.status = 'difficult';
-      word.wrongCount += 1;
-      word.interval = 0;
-      word.due = now();
-      if (!state.hafazni.mistakes.includes(word.id)) state.hafazni.mistakes.push(word.id);
+      sessionWord.wrong++;
+      sessionWord.consecutiveWrong++;
+      sessionWord.consecutiveCorrect = 0;
+      session.summary.wrong++;
+      session.mistakes.push(sessionWord.id);
     }
-    word.lastReview = now();
+
+    // تحديث الصعوبة والإتقان
+    const ratio = sessionWord.correct / Math.max(1, sessionWord.attempts);
+    sessionWord.mastery = Math.min(100, Math.round(ratio * 100));
+    sessionWord.difficulty = Math.min(10, Math.max(0, 
+      sessionWord.difficulty + (isCorrect ? -0.5 : 1.5)
+    ));
+
+    // تحديث الكلمة الأصلية
+    if (originalWord) {
+      if (isCorrect) {
+        originalWord.correctCount++;
+        originalWord.status = originalWord.correctCount > 2 ? 'learned' : 'new';
+        originalWord.interval = originalWord.interval > 0 ? Math.min(originalWord.interval * 1.5, 720) : 1;
+      } else {
+        originalWord.wrongCount++;
+        originalWord.status = 'difficult';
+        originalWord.interval = 0;
+      }
+      originalWord.lastReview = now();
+      originalWord.due = now() + originalWord.interval * 3600000;
+    }
+
+    el.hafazniFeedback.textContent = isCorrect ? '✅ إجابة صحيحة!' : `❌ الصحيح: ${correctAnswer}`;
+    el.hafazniFeedback.className = 'test-feedback ' + (isCorrect ? 'correct' : 'wrong');
 
     saveState(true);
     updateStats();
-    updateHafazniOverview();
 
     window.setTimeout(() => {
-      state.hafazni.index++;
-      resetHafazniQuestion();
+      advanceHafazniIndex(isCorrect, sessionWord);
+    }, 1200);
+  }
+
+  function advanceHafazniIndex(isCorrect, sessionWord) {
+    const session = state.hafazni;
+    if (!session.active) return;
+
+    // خوارزمية التكرار المتباعد البسيطة:
+    // إذا كانت الإجابة صحيحة وتجاوز الإتقان 80%، ننقل الكلمة إلى قائمة "متقنة" ونقلل من ظهورها.
+    // إذا كانت خاطئة، نرفع أولويتها بإعادتها إلى المؤشر الحالي أو قريبًا.
+    // نستخدم نظام الأولويات: نعيد ترتيب القائمة بحيث تظهر الكلمات الصعبة أكثر.
+
+    const words = session.sessionWords;
+    const currentIdx = session.currentIndex;
+
+    // نزيل الكلمة الحالية من موضعها (سنعيد إدراجها حسب الحاجة)
+    const removed = words.splice(currentIdx, 1)[0];
+
+    if (isCorrect && removed.mastery >= 80 && removed.attempts >= 3) {
+      // الكلمة متقنة: نضعها في نهاية القائمة (تظهر لاحقًا للتثبيت)
+      session.summary.mastered.push(removed.id);
+      words.push(removed);
+    } else if (!isCorrect || removed.mastery < 50) {
+      // الكلمة صعبة: نضعها في موضع قريب لمراجعتها قريبًا
+      // نضعها بعد 2-3 كلمات من الموضع الحالي
+      const insertPos = Math.min(currentIdx + 2 + Math.floor(Math.random() * 2), words.length);
+      words.splice(insertPos, 0, removed);
+      // نسجلها كخطأ للمراجعة
+      if (!session.mistakes.includes(removed.id)) session.mistakes.push(removed.id);
+    } else {
+      // متوسطة: نضعها في المنتصف
+      const insertPos = Math.min(currentIdx + Math.floor(words.length / 3), words.length);
+      words.splice(insertPos, 0, removed);
+    }
+
+    // تحديث المؤشر ليشير إلى الكلمة التالية (الموجودة الآن في نفس المؤشر بعد إزالة الكلمة الحالية)
+    session.currentIndex = Math.min(currentIdx, words.length - 1);
+
+    // إذا كانت القائمة فارغة أو المؤشر خارج الحدود، ننهي
+    if (session.currentIndex >= words.length || words.length === 0) {
+      finishHafazniSession();
+    } else {
+      renderHafazniQuestion();
       updateHafazniOverview();
-    }, 800);
+    }
   }
 
-  function skipHafazni() {
-    if (!state.hafazni.active) return;
-    state.hafazni.index++;
-    resetHafazniQuestion();
-    updateHafazniOverview();
-  }
-
-  function stopHafazni() {
+  function finishHafazniSession() {
     state.hafazni.active = false;
-    el.hafazniSession.style.display = 'none';
-    updateHafazniOverview();
-  }
-
-  function finishHafazni() {
-    state.hafazni.active = false;
+    state.hafazni.processing = false;
     el.hafazniSession.style.display = 'none';
 
-    const mistakeCount = state.hafazni.mistakes.length;
-    const message = mistakeCount
-      ? `انتهت جلسة حفظني. عدد الكلمات التي تحتاج مراجعة: ${mistakeCount}.`
-      : '🎉 انتهت جلسة حفظني بدون أخطاء.';
-    alert(message);
+    // عرض الملخص
+    const summary = state.hafazni.summary;
+    const totalAttempts = summary.attempts || 1;
+    const correct = summary.correct;
+    const wrong = summary.wrong;
+    const rate = Math.round((correct / totalAttempts) * 100);
+
+    el.summaryCorrect.textContent = correct;
+    el.summaryWrong.textContent = wrong;
+    el.summaryRate.textContent = rate + '%';
+    el.summaryAttempts.textContent = totalAttempts;
+
+    // الكلمات المتقنة والمحتاجة مراجعة
+    const masteredCount = state.hafazni.summary.mastered.length;
+    const needsReviewCount = state.hafazni.mistakes.length;
+    el.summaryMastered.textContent = masteredCount;
+    el.summaryNeedsReview.textContent = needsReviewCount;
+    el.summaryMistakes.textContent = wrong;
+
+    el.hafazniSummary.style.display = 'block';
+    el.hafazniSetupCard.style.display = 'block';
     updateHafazniOverview();
     updateAllViews();
   }
 
-  function reviewMistakes() {
+  function reviewHafazniMistakes() {
     if (!state.hafazni.mistakes.length) {
       alert('لا توجد أخطاء في آخر جلسة.');
       return;
     }
-    startHafazniSession(state.hafazni.mistakes);
+    // بدء جلسة جديدة بالأخطاء فقط
+    const mistakeIds = state.hafazni.mistakes;
+    // نعيد ضبط قائمة الأخطاء بعد بدء الجلسة
+    state.hafazni.mistakes = [];
+    initHafazniSession(mistakeIds);
   }
+
+  function stopHafazni() {
+    state.hafazni.active = false;
+    state.hafazni.processing = false;
+    el.hafazniSession.style.display = 'none';
+    el.hafazniSummary.style.display = 'none';
+    el.hafazniSetupCard.style.display = 'block';
+    updateHafazniOverview();
+  }
+
+  // ==================== باقي الوظائف ====================
 
   function downloadTextWords() {
     if (!state.vocabulary.length) {
@@ -1382,7 +1679,7 @@
       exportedAt: new Date().toISOString(),
       data: buildPersistedState()
     };
-    downloadBlob(JSON.stringify(backup, null, 2), 'flashcards-backup-1.4.2.json', 'application/json;charset=utf-8');
+    downloadBlob(JSON.stringify(backup, null, 2), 'flashcards-backup-1.4.3.json', 'application/json;charset=utf-8');
   }
 
   async function importBackup(file) {
@@ -1457,8 +1754,10 @@
     state.currentIndex = 0;
     state.selectedIds = [];
     state.studyFilter = 'all';
-    state.hafazni = { active: false, ids: [], index: 0, mistakes: [] };
+    state.hafazni = { active: false, sessionWords: [], currentIndex: 0, mistakes: [], processing: false, summary: { correct: 0, wrong: 0, attempts: 0, mastered: [], needsReview: [] } };
     el.hafazniSession.style.display = 'none';
+    el.hafazniSummary.style.display = 'none';
+    el.hafazniSetupCard.style.display = 'block';
     storageSet(STORAGE_KEY, buildPersistedState());
     updateAllViews();
     navigateTo('homePage');
@@ -1679,20 +1978,62 @@
       renderWordList(state.search);
     });
 
-    el.startHafazniBtn.addEventListener('click', () => startHafazniSession());
-    el.reviewMistakesBtn.addEventListener('click', reviewMistakes);
-    el.hafazniSpeakBtn.addEventListener('click', () => {
-      const word = state.vocabulary.find(w => w.id === state.hafazni.ids[state.hafazni.index]);
-      if (word) speak(word.english);
+    el.startHafazniBtn.addEventListener('click', () => {
+      if (!state.selectedIds.length) {
+        alert('حدد كلمات أولاً من صفحة الكلمات.');
+        return;
+      }
+      initHafazniSession(state.selectedIds);
     });
-    el.hafazniCheckBtn.addEventListener('click', checkHafazni);
-    el.hafazniSkipBtn.addEventListener('click', skipHafazni);
+
+    el.reviewMistakesBtn.addEventListener('click', reviewHafazniMistakes);
+    el.hafazniSpeakBtn.addEventListener('click', () => {
+      const session = state.hafazni;
+      if (!session.active) return;
+      const sessionWord = session.sessionWords[session.currentIndex];
+      if (!sessionWord) return;
+      const originalWord = state.vocabulary.find(w => w.id === sessionWord.id);
+      if (originalWord) speak(originalWord.english);
+    });
+
+    el.hafazniCheckBtn.addEventListener('click', checkHafazniWriting);
+    el.hafazniSkipBtn.addEventListener('click', () => {
+      if (state.hafazni.processing) return;
+      if (!state.hafazni.active) return;
+      // نعد الكلمة كخطأ لتظهر مجددًا
+      const session = state.hafazni;
+      const sessionWord = session.sessionWords[session.currentIndex];
+      if (sessionWord) {
+        sessionWord.wrong++;
+        session.summary.wrong++;
+        session.mistakes.push(sessionWord.id);
+        // نقلها للتكرار
+        const words = session.sessionWords;
+        const removed = words.splice(session.currentIndex, 1)[0];
+        const insertPos = Math.min(session.currentIndex + 1, words.length);
+        words.splice(insertPos, 0, removed);
+        // حفظ التقدم
+        saveState(true);
+        updateStats();
+      }
+      renderHafazniQuestion();
+      updateHafazniOverview();
+    });
+
     el.hafazniStopBtn.addEventListener('click', stopHafazni);
     el.hafazniInput.addEventListener('keydown', event => {
       if (event.key === 'Enter') {
         event.preventDefault();
-        checkHafazni();
+        checkHafazniWriting();
       }
+    });
+
+    // أزرار الملخص
+    el.summaryReviewBtn.addEventListener('click', reviewHafazniMistakes);
+    el.summaryCloseBtn.addEventListener('click', () => {
+      el.hafazniSummary.style.display = 'none';
+      el.hafazniSetupCard.style.display = 'block';
+      updateHafazniOverview();
     });
 
     el.helpSettingsBtn.addEventListener('click', () => openModal(el.helpModal));
@@ -1738,17 +2079,12 @@
     if (!('serviceWorker' in navigator)) return;
     try {
       const registration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
-
-      // إعادة تحميل الصفحة تلقائيًا (مرة واحدة فقط) عند وصول نسخة جديدة من التطبيق
-      // حتى تظهر التحديثات مباشرة دون الحاجة لإغلاق التبويب يدويًا.
       let refreshed = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (refreshed) return;
         refreshed = true;
         window.location.reload();
       });
-
-      // التحقق من وجود تحديث فور تحميل الصفحة وكل مرة يعود فيها الاتصال بالإنترنت.
       registration.update().catch(() => {});
       window.addEventListener('online', () => registration.update().catch(() => {}));
     } catch (error) {
