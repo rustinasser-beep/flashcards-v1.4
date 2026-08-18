@@ -1737,7 +1737,20 @@
   async function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
     try {
-      await navigator.serviceWorker.register('./sw.js', { scope: './' });
+      const registration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+
+      // إعادة تحميل الصفحة تلقائيًا (مرة واحدة فقط) عند وصول نسخة جديدة من التطبيق
+      // حتى تظهر التحديثات مباشرة دون الحاجة لإغلاق التبويب يدويًا.
+      let refreshed = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshed) return;
+        refreshed = true;
+        window.location.reload();
+      });
+
+      // التحقق من وجود تحديث فور تحميل الصفحة وكل مرة يعود فيها الاتصال بالإنترنت.
+      registration.update().catch(() => {});
+      window.addEventListener('online', () => registration.update().catch(() => {}));
     } catch (error) {
       console.warn('Service worker registration failed:', error);
     }
