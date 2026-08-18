@@ -31,6 +31,7 @@
   let recognition = null;
   let saveTimer = null;
   let feedbackBound = false;
+  let guessInputResetTimer = null;
 
   const $ = id => document.getElementById(id);
 
@@ -787,6 +788,11 @@
       el.voiceResult.textContent = '';
       el.voiceState.textContent = `🎙️ سأستمع للإجابة بـ ${getAnswerLanguageName(word)} لأن هذا هو لسان الإجابة المطلوبة.`;
     }
+
+    // التركيز على حقل الكتابة إذا كان الوضع كتابة
+    if (state.currentPage === 'testPage' && state.testSubMode === 'writing') {
+      window.setTimeout(() => el.guessInput.focus(), 0);
+    }
   }
 
   function resetTestUI() {
@@ -817,6 +823,13 @@
     el.guessInput.className = isCorrect ? 'correct' : 'wrong';
     el.testFeedback.textContent = isCorrect ? '✅ إجابة صحيحة!' : `❌ الصحيح: ${getTargetWord(word)}`;
     el.testFeedback.className = 'test-feedback ' + (isCorrect ? 'correct' : 'wrong');
+
+    // إزالة class بعد فترة قصيرة دون التأثير على القفل
+    if (guessInputResetTimer) clearTimeout(guessInputResetTimer);
+    guessInputResetTimer = window.setTimeout(() => {
+      el.guessInput.className = '';
+    }, 500);
+
     processTestAnswer(isCorrect);
   }
 
