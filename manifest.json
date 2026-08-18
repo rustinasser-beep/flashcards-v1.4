@@ -10,6 +10,30 @@
   "description": "تطبيق بطاقات كلمات مع دراسة واختبارات وصوت ووضع حفظني.",
   "icons": [
     {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}{
+  "name": "بطاقات الكلمات الذكية",
+  "short_name": "كلماتي",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f0f4f8",
+  "theme_color": "#2563eb",
+  "description": "تطبيق بطاقات كلمات مع دراسة واختبارات وصوت ووضع حفظني.",
+  "icons": [
+    {
       "src": "./icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
