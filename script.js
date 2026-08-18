@@ -783,6 +783,13 @@
     el.testWordStatus.style.display = 'block';
     el.testPronounceBtn.style.display = word.english && word.english !== '?' ? 'flex' : 'none';
 
+    // مسح حقل الكتابة قبل عرض السؤال الجديد حتى لا تبقى إجابة السؤال السابق
+    if (state.testSubMode === 'writing') {
+      if (guessInputResetTimer) { clearTimeout(guessInputResetTimer); guessInputResetTimer = null; }
+      el.guessInput.value = '';
+      el.guessInput.className = '';
+    }
+
     if (state.testSubMode === 'choice') generateOptions(word);
     if (state.testSubMode === 'voice') {
       el.voiceResult.textContent = '';
