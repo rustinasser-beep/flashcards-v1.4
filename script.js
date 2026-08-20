@@ -2087,7 +2087,13 @@
   async function registerServiceWorker() {
     if (!('serviceWorker' in navigator)) return;
     try {
-      const registration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+      // updateViaCache: 'none' يجبر المتصفح على التأكد من sw.js من السيرفر
+      // مباشرة في كل مرة، بدل ما يعتمد على الكاش العادي بتاع المتصفح (اللي كان
+      // بيمنع اكتشاف أي تحديث حقيقي حتى مع الـ refresh العادي على GitHub Pages).
+      const registration = await navigator.serviceWorker.register('./sw.js', {
+        scope: './',
+        updateViaCache: 'none'
+      });
       // لا نعمل reload تلقائي عند تفعيل نسخة جديدة من الـ Service Worker.
       // لو فيه تحديث وانت متصل بالنت، هيتحمّل بهدوء في الخلفية بدون ما يقاطع
       // أي جلسة شغالة (حفظني/اختبار) أو يضيّع أي بيانات غير محفوظة، وهيتفعّل
@@ -2096,6 +2102,12 @@
       // الحالي زي ما هو بدون أي تغيير أو حذف.
       registration.update().catch(() => {});
       window.addEventListener('online', () => registration.update().catch(() => {}));
+      // نتأكد كمان من وجود تحديث في كل مرة الصفحة ترجع تبقى ظاهرة (تبويب كان
+      // مفتوح في الخلفية، أو المستخدم رجع للتطبيق بعد فترة) — بدون أي إزعاج
+      // أو reload، فقط فحص هادئ في الخلفية.
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') registration.update().catch(() => {});
+      });
     } catch (error) {
       console.warn('Service worker registration failed:', error);
     }
