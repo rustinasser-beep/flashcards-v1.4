@@ -2085,12 +2085,12 @@
     if (!('serviceWorker' in navigator)) return;
     try {
       const registration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
-      let refreshed = false;
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        if (refreshed) return;
-        refreshed = true;
-        window.location.reload();
-      });
+      // لا نعمل reload تلقائي عند تفعيل نسخة جديدة من الـ Service Worker.
+      // لو فيه تحديث وانت متصل بالنت، هيتحمّل بهدوء في الخلفية بدون ما يقاطع
+      // أي جلسة شغالة (حفظني/اختبار) أو يضيّع أي بيانات غير محفوظة، وهيتفعّل
+      // تلقائيًا في المرة الجاية اللي التطبيق يتفتح فيها من جديد.
+      // لو مفيش نت، الطلب هيفشل بصمت وهيفضل التطبيق شغال offline من الكاش
+      // الحالي زي ما هو بدون أي تغيير أو حذف.
       registration.update().catch(() => {});
       window.addEventListener('online', () => registration.update().catch(() => {}));
     } catch (error) {
