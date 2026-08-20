@@ -1,24 +1,36 @@
 const CACHE_NAME = 'flashcards-v1.4.3';
-const APP_SHELL = [
+// ملفات أساسية: التطبيق لا يعمل offline بدونها إطلاقًا
+const CRITICAL_ASSETS = [
   './',
   './index.html',
   './style.css',
   './script.js',
-  './manifest.json',
+  './manifest.json'
+];
+// ملفات اختيارية (أيقونات): لو مش موجودة أو فشل تحميلها لا نوقف تثبيت
+// الـ Service Worker بالكامل بسببها. هذا هو السبب الأكثر ترجيحًا لعدم عمل
+// أي تخزين offline إطلاقًا: cache.addAll() تفشل بالكامل (all-or-nothing)
+// لو ملف واحد فقط منها 404 (مثل أيقونة ناقصة)، فلا يُخزَّن حتى index.html/script.js.
+const OPTIONAL_ASSETS = [
   './icons/icon-192.png',
   './icons/icon-512.png'
 ];
 
 self.addEventListener('install', event => {
-  // لا نستخدم skipWaiting هنا عمدًا: نترك النسخة الجديدة "منتظرة" ولا نفعّلها
-  // فورًا حتى لو كان هناك اتصال بالإنترنت وتحديث جديد. هذا يضمن أن التطبيق
-  // المفتوح حاليًا (وأي جلسة حفظني/اختبار نشطة) لا يتأثر إطلاقًا ولا يُعاد
-  // تحميله فجأة من تحت المستخدم. التحديث سيُطبَّق تلقائيًا وبأمان في المرة
-  // القادمة التي يُفتح فيها التطبيق من جديد (بعد إغلاق كل التبويبات القديمة) —
-  // وبيانات localStorage لا تتأثر بهذا إطلاقًا في كل الأحوال.
   event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(cache => cache.addAll(APP_SHELL))
+    caches.open(CACHE_NAME).then(async cache => {
+      // نحاول تخزين كل ملف أساسي على حدة (وليس addAll) حتى لو ملف واحد فشل
+      // لا يمنع باقي الملفات الأساسية من التخزين.
+      await Promise.all(
+        CRITICAL_ASSETS.map(url => cache.add(url).catch(err => {
+          console.warn('[SW] فشل تخزين ملف أساسي:', url, err);
+        }))
+      );
+      // الأيقونات: نتجاهل أي فشل تمامًا بدون التأثير على باقي التثبيت.
+      await Promise.all(
+        OPTIONAL_ASSETS.map(url => cache.add(url).catch(() => {}))
+      );
+    })
   );
 });
 
