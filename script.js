@@ -1904,18 +1904,21 @@
       state.testSubMode = 'writing';
       updateTestModeUI();
       resetTestUI();
+      updateTestView();
       saveState();
     });
     el.typeChoiceBtn.addEventListener('click', () => {
       state.testSubMode = 'choice';
       updateTestModeUI();
       resetTestUI();
+      updateTestView();
       saveState();
     });
     el.typeVoiceBtn.addEventListener('click', () => {
       state.testSubMode = 'voice';
       updateTestModeUI();
       resetTestUI();
+      updateTestView();
       saveState();
     });
 
